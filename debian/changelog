@@ -1,0 +1,31 @@
+tel-plugin-vmodem (0.1.3) unstable; urgency=low
+
+  * Fix prefix (TAPI_ to TCORE_)
+  * Git: slp/pkgs/t/tel-plugin-vmodem
+  * Tag: tel-plugin-vmodem_0.1.3
+
+ -- Inho Oh <inho48.oh@samsung.com>  Tue, 27 Mar 2012 22:11:38 +0900
+
+tel-plugin-vmodem (0.1.2) unstable; urgency=low
+
+  * Fix build break and Add .spec file for OBS
+  * Git: slp/pkgs/t/tel-plugin-vmodem
+  * Tag: tel-plugin-vmodem_0.1.2
+
+ -- DongHoo Park <donghoo.park@samsung.com>  Sat, 17 Mar 2012 02:30:20 +0900
+
+tel-plugin-vmodem (0.1.1) unstable; urgency=low
+
+  * Remove unused header
+  * Git: slp/pkgs/t/tel-plugin-vmodem
+  * Tag: tel-plugin-vmodem_0.1.1
+
+ -- Inho Oh <inho48.oh@samsung.com>  Fri, 16 Mar 2012 02:39:47 +0900
+
+tel-plugin-vmodem (0.1.0) unstable; urgency=low
+
+  * Initial
+  * Git: slp/pkgs/t/tel-plugin-vmodem
+  * Tag: tel-plugin-vmodem_0.1.0
+
+ -- Inho Oh <inho48.oh@samsung.com>  Thu, 27 Mar 2012 20:50:00 +0900
