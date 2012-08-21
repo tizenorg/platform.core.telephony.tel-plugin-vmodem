@@ -104,15 +104,13 @@ static struct tcore_hal_operations hops =
 
 static gboolean on_recv_vdpram_message(GIOChannel *channel, GIOCondition condition, gpointer data)
 {
-	TcorePlugin *plugin = data;
-	TcoreHal *hal;
+	TcoreHal *hal = data;
 	struct custom_data *custom;
 
 	#define BUF_LEN_MAX 512
 	char buf[BUF_LEN_MAX];
 	int n = 0;
 
-	hal = tcore_plugin_ref_hal(plugin);
 	custom = tcore_hal_ref_user_data(hal);
 	memset(buf, 0, BUF_LEN_MAX);
 	n = vdpram_tty_read(custom->vdpram_fd, buf, BUF_LEN_MAX);
@@ -127,7 +125,7 @@ static gboolean on_recv_vdpram_message(GIOChannel *channel, GIOCondition conditi
 	return TRUE;
 }
 
-static guint register_gio_watch(TcorePlugin *plugin, int fd, void *callback)
+static guint register_gio_watch(TcoreHal *h, int fd, void *callback)
 {
 	GIOChannel *channel = NULL;
 	guint source;
@@ -136,7 +134,7 @@ static guint register_gio_watch(TcorePlugin *plugin, int fd, void *callback)
 		return 0;
 
 	channel = g_io_channel_unix_new(fd);
-	source = g_io_add_watch(channel, G_IO_IN, (GIOFunc) callback, plugin);
+	source = g_io_add_watch(channel, G_IO_IN, (GIOFunc) callback, h);
 	g_io_channel_unref(channel);
 	channel = NULL;
 
@@ -178,10 +176,10 @@ static gboolean on_init(TcorePlugin *plugin)
 	/*
 	 * HAL init
 	 */
-	hal = tcore_hal_new(plugin, "vmodem", &hops);
+	hal = tcore_hal_new(plugin, "vmodem", &hops, TCORE_HAL_MODE_CUSTOM);
 	tcore_hal_link_user_data(hal, data);
 
-	data->watch_id_vdpram= register_gio_watch(plugin, data->vdpram_fd, on_recv_vdpram_message);
+	data->watch_id_vdpram= register_gio_watch(hal, data->vdpram_fd, on_recv_vdpram_message);
 
 	dbg("vdpram_fd = %d, watch_id_vdpram=%d ", data->vdpram_fd, data->watch_id_vdpram);
 

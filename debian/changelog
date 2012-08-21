@@ -1,3 +1,11 @@
+tel-plugin-vmodem (0.1.4) unstable; urgency=low
+
+  * package version sync with public
+  * Git: slp/pkgs/t/tel-plugin-vmodem
+  * Tag: tel-plugin-vmodem_0.1.4
+
+ -- Inho Oh <inho48.oh@samsung.com>  Mon, 02 Apr 2012 16:10:33 +0900
+
 tel-plugin-vmodem (0.1.3) unstable; urgency=low
 
   * Fix prefix (TAPI_ to TCORE_)

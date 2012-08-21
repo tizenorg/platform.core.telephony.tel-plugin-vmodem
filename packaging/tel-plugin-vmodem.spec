@@ -1,7 +1,7 @@
 #sbs-git:slp/pkgs/t/tel-plugin-vmodem
 Name:       tel-plugin-vmodem
 Summary:    Telephony AT Virtual Modem library
-Version: 0.1.2
+Version: 0.1.6
 Release:    1
 Group:      System/Libraries
 License:    Apache
