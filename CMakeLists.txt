@@ -6,7 +6,7 @@ SET(PREFIX ${CMAKE_INSTALL_PREFIX})
 SET(EXEC_PREFIX "\${prefix}")
 SET(LIBDIR "\${prefix}/lib")
 SET(INCLUDEDIR "\${prefix}/include")
-SET(PKGCONFIGDIR "${PREFIX}/lib/pkgconfig" CACHE PATH PKGCONFIGDIR)
+SET(PKGCONFIGDIR "${PREFIX}/${LIB_INSTALL_DIR}/pkgconfig" CACHE PATH PKGCONFIGDIR)
 SET(CMAKE_INSTALL_PREFIX "${PREFIX}")
 
 # Set required packages
@@ -43,5 +43,5 @@ SET_TARGET_PROPERTIES(vmodem-plugin PROPERTIES PREFIX "" OUTPUT_NAME vmodem-plug
 
 # install
 INSTALL(TARGETS vmodem-plugin
-		LIBRARY DESTINATION lib/telephony/plugins)
+	LIBRARY DESTINATION ${LIB_INSTALL_DIR}/telephony/plugins)
 INSTALL(FILES ${CMAKE_SOURCE_DIR}/LICENSE DESTINATION /usr/share/license RENAME tel-plugin-vmodem)
