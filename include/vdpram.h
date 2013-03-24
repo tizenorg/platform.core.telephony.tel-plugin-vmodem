@@ -23,9 +23,8 @@
 
 int vdpram_close(int fd);
 int vdpram_open (void);
-int vdpramerr_open(void);
-int vdpram_poweron(int fd);
-int vdpram_poweroff(int fd);
+gboolean vdpram_poweron(int fd);
+gboolean vdpram_poweroff(int fd);
 
 int vdpram_tty_read(int nFd, void* buf, size_t nbytes);
 int vdpram_tty_write(int nFd, void* buf, size_t nbytes);

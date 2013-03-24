@@ -21,8 +21,8 @@
 #ifndef __VDPRAM_DUMP_H__
 #define __VDPRAM_DUMP_H__
 
-#define IPC_TX	0
-#define IPC_RX	1
+#define TX				0
+#define RX				1
 
 void vdpram_hex_dump(int dir, unsigned short data_len, void *data);
 

@@ -66,7 +66,7 @@ void vdpram_hex_dump(int dir, unsigned short data_len, void *data)
 	if(!data)
 		return;
 
-	if (dir == IPC_RX)
+	if (dir == RX)
 		d = "[RX]";
 	else
 		d = "[TX]";
