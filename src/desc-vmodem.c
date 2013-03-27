@@ -285,10 +285,10 @@ static TReturn hal_setup_netif(CoreObject *co,
 	}
 
 	if (enable == TRUE) {
-		dbg("[VMODEM] ACTIVATE - Context ID: [%d]", cid)
+		dbg("[VMODEM] ACTIVATE - Context ID: [%d]", cid);
 		control = "/sys/class/net/svnet0/pdp/activate";
 	} else {
-		dbg("[VMODEM] DEACTIVATE - Context ID: [%d]", cid)
+		dbg("[VMODEM] DEACTIVATE - Context ID: [%d]", cid);
 		control = "/sys/class/net/svnet0/pdp/deactivate";
 	}
 
