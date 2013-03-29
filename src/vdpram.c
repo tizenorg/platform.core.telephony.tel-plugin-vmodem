@@ -69,7 +69,7 @@ typedef struct _tty_old_setting_t {
 	struct	_tty_old_setting_t *prev;
 } tty_old_setting_t;
 
-#define VDPRAM_OPEN_PATH		"/dev/dpram/0"
+#define VDPRAM_OPEN_PATH		"/dev/vdpram0"
 
 /* DPRAM ioctls for DPRAM tty devices */
 #define IOC_MZ_MAGIC		('h')
