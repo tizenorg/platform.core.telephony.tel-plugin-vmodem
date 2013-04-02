@@ -429,7 +429,7 @@ EXIT:
 	g_free(data);
 
 	/* Unregister from Server */
-//	tcore_server_unregister_modem(tcore_plugin_ref_server(plugin), plugin);
+	tcore_server_unregister_modem(tcore_plugin_ref_server(plugin), plugin);
 
 	return FALSE;
 }
