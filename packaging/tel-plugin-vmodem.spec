@@ -5,6 +5,7 @@ Release:    1
 Group:      System/Libraries
 License:    Apache
 Source0:    tel-plugin-vmodem-%{version}.tar.gz
+Source1001: 	tel-plugin-vmodem.manifest
 Requires(post): /sbin/ldconfig
 Requires(postun): /sbin/ldconfig
 BuildRequires:  cmake
@@ -17,6 +18,7 @@ Telephony AT Modem library
 
 %prep
 %setup -q
+cp %{SOURCE1001} .
 
 %build
 %cmake .
@@ -32,7 +34,7 @@ make %{?jobs:-j%jobs}
 mkdir -p %{buildroot}/usr/share/license
 
 %files
-%manifest tel-plugin-vmodem.manifest
+%manifest %{name}.manifest
 %defattr(-,root,root,-)
 %{_libdir}/telephony/plugins/vmodem-plugin*
 /usr/share/license/tel-plugin-vmodem
