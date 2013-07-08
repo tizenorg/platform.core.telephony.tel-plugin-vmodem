@@ -1,0 +1,8 @@
+Change-Id: Ifdcb6f0ea56afee55d18327e3aca1bc2b221846f
+Code-Review+2: Ryan Ware <ware@linux.intel.com>
+Verified+1: Ryan Ware <ware@linux.intel.com>
+Submitted-by: Ryan Ware <ware@linux.intel.com>
+Submitted-at: Mon, 08 Jul 2013 10:06:38 -0700
+Reviewed-on: https://review.tizen.org/gerrit/4559
+Project: platform/core/telephony/tel-plugin-vmodem
+Branch: refs/heads/tizen
