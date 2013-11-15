@@ -3,7 +3,7 @@ Summary:    Telephony AT Virtual Modem library
 Version:    0.1.8
 Release:    1
 Group:      System/Libraries
-License:    Apache
+License:    Apache-2.0
 Source0:    tel-plugin-vmodem-%{version}.tar.gz
 Source1001: 	tel-plugin-vmodem.manifest
 Requires(post): /sbin/ldconfig
@@ -32,9 +32,10 @@ make %{?jobs:-j%jobs}
 %install
 %make_install
 mkdir -p %{buildroot}/usr/share/license
+cp LICENSE %{buildroot}/usr/share/license/%{name}
 
 %files
 %manifest %{name}.manifest
 %defattr(-,root,root,-)
 %{_libdir}/telephony/plugins/vmodem-plugin*
-/usr/share/license/tel-plugin-vmodem
+/usr/share/license/%{name}
