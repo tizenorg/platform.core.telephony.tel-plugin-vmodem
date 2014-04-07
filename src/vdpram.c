@@ -1,9 +1,7 @@
 /*
  * tel-plugin-vmodem
  *
- * Copyright (c) 2012 Samsung Electronics Co., Ltd. All rights reserved.
- *
- * Contact: Junhwan An <jh48.an@samsung.com>
+ * Copyright (c) 2013 Samsung Electronics Co. Ltd. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,9 +30,8 @@
 #include <glib.h>
 
 #include <log.h>
-#include "legacy/TelUtility.h"
+
 #include "vdpram.h"
-#include "vdpram_dump.h"
 
 #ifndef TIOCMODG
 #  ifdef TIOCMGET
@@ -56,35 +53,37 @@
 #  endif
 #endif
 
+#define VDPRAM_OPEN_PATH		"/dev/vdpram0"
+
+/* DPRAM ioctls for DPRAM tty devices */
+#define IOC_MZ_MAGIC			('h')
+#define HN_DPRAM_PHONE_ON		_IO (IOC_MZ_MAGIC, 0xd0)
+#define HN_DPRAM_PHONE_OFF		_IO (IOC_MZ_MAGIC, 0xd1)
+#define HN_DPRAM_PHONE_GETSTATUS	_IOR(IOC_MZ_MAGIC, 0xd2, guint)
+
 /* Retry parameters */
 #define SLEEP_TIME_IN_SEC		0
 #define SLEEP_TIME_IN_MSEC		50
 
-#define MAX_RETRY_COUNT			10
+#define MAX_RETRY_COUNT		10
 
-typedef struct _tty_old_setting_t {
-	int		fd;
-	struct	termios  termiosVal;
-	struct	_tty_old_setting_t *next;
-	struct	_tty_old_setting_t *prev;
-} tty_old_setting_t;
+typedef struct tty_old_setting TtyOldSetting;
 
-#define VDPRAM_OPEN_PATH		"/dev/vdpram0"
+struct tty_old_setting {
+	gint fd;
+	struct termios termiosVal;
+	TtyOldSetting *next;
+	TtyOldSetting *prev;
+};
 
-/* DPRAM ioctls for DPRAM tty devices */
-#define IOC_MZ_MAGIC		('h')
-#define HN_DPRAM_PHONE_ON			_IO (IOC_MZ_MAGIC, 0xd0)
-#define HN_DPRAM_PHONE_OFF			_IO (IOC_MZ_MAGIC, 0xd1)
-#define HN_DPRAM_PHONE_GETSTATUS	_IOR(IOC_MZ_MAGIC, 0xd2, unsigned int)
-
-static tty_old_setting_t *ttyold_head = NULL;
+static TtyOldSetting *ttyold_head = NULL;
 
 /*
- *	Insert TTY old settings.
+ * Insert TTY old settings
  */
-static void __insert_tty_oldsetting(tty_old_setting_t *me)
+static void __insert_tty_oldsetting(TtyOldSetting *me)
 {
-	dbg("Function Entrance");
+	dbg("Enter");
 
 	if (me == NULL)
 		return;
@@ -98,42 +97,31 @@ static void __insert_tty_oldsetting(tty_old_setting_t *me)
 }
 
 /*
- *	Search TTY old settings.
+ * Search TTY old settings
  */
-static tty_old_setting_t *__search_tty_oldsetting(int fd)
+static TtyOldSetting *__search_tty_oldsetting(gint fd)
 {
-	tty_old_setting_t *tty = NULL;
+	TtyOldSetting *tty = ttyold_head;
 
-	dbg("Function Entrance");
+	dbg("Enter");
 
-	if (ttyold_head == NULL)
-		return NULL;
-
-	tty = ttyold_head;
-
-	do {
+	while (tty) {
 		if (tty->fd == fd) {
-			dbg("oldsetting for inputted fd [%d] is found", fd);
+			dbg("tty for fd [%d] found!!!", fd);
 			break;
-		} else {
-			if (tty->next == NULL) {
-				err("No oldsetting found!!!");
-				tty = NULL;
-				break;
-			}
-			tty = tty->next;
 		}
-	} while (1);
+		tty = tty->next;
+	};
 
 	return tty;
 }
 
 /*
- *	Remove TTY old settings.
+ * Remove TTY old settings
  */
-static void __remove_tty_oldsetting(tty_old_setting_t *me)
+static void __remove_tty_oldsetting(TtyOldSetting *me)
 {
-	dbg( "Function Enterence.");
+	dbg("Enter");
 
 	if (me == NULL)
 		return;
@@ -148,18 +136,18 @@ static void __remove_tty_oldsetting(tty_old_setting_t *me)
 }
 
 /*
- *	Set hardware flow control.
+ * Set hardware flow control
  */
-static void __tty_sethwf(int fd, int on)
+static void __tty_sethwf(gint fd, gint on)
 {
 	struct termios tty;
 
-	dbg("Function Entrance");
+	dbg("Enter");
 
 	if (tcgetattr(fd, &tty))
 		err("__tty_sethwf: tcgetattr:");
 
-	if (on)
+	if (on == 1)
 		tty.c_cflag |= CRTSCTS;
 	else
 		tty.c_cflag &= ~CRTSCTS;
@@ -169,13 +157,13 @@ static void __tty_sethwf(int fd, int on)
 }
 
 /*
- *	Set RTS line. Sometimes dropped. Linux specific?
+ * Set RTS line. Sometimes dropped. Linux specific?
  */
-static int __tty_setrts(int fd)
+static gint __tty_setrts(gint fd)
 {
-	int mcs;
+	gint mcs;
 
-	dbg("Function Entrance");
+	dbg("Enter");
 
 	if (-1 ==  ioctl(fd, TIOCMODG, &mcs))
 		err("icotl: TIOCMODG");
@@ -189,35 +177,36 @@ static int __tty_setrts(int fd)
 }
 
 /*
- *	Set baudrate, parity and number of bits.
+ * Set baudrate, parity and number of bits
  */
-static int __tty_setparms(int fd, char* baudr, char* par, char* bits, char* stop, int hwf, int swf)
+static gboolean __tty_setparms(gint fd,
+	gchar *baudr, gchar *par, gchar *bits, gchar *stop, gint hwf, gint swf)
 {
-	int spd = -1;
-	int newbaud;
-	int bit = bits[0];
-	int stop_bit = stop[0];
+	gint spd = -1;
+	gint newbaud;
+	gint bit = bits[0];
+	gint stop_bit = stop[0];
 
 	struct termios tty;
-	tty_old_setting_t *old_setting = NULL;
+	TtyOldSetting *old_setting = NULL;
 
-	dbg("Function Entrance");
+	dbg("Enter");
 
-	old_setting = g_try_new0(tty_old_setting_t, 1);
+	old_setting = g_try_new0(TtyOldSetting, 1);
 
 	if (old_setting == NULL)
-		return TAPI_API_SYSTEM_OUT_OF_MEM;
+		return FALSE;
 
 	old_setting->fd = fd;
 
 	if (tcgetattr(fd, &tty) < 0) {
 		g_free(old_setting);
-		return TAPI_API_TRANSPORT_LAYER_FAILURE;
+		return FALSE;
 	}
 
 	if (tcgetattr(fd, &old_setting->termiosVal) < 0) {
 		g_free(old_setting);
-		return TAPI_API_TRANSPORT_LAYER_FAILURE;
+		return FALSE;
 	}
 
 	__insert_tty_oldsetting(old_setting);
@@ -232,54 +221,54 @@ static int __tty_setparms(int fd, char* baudr, char* par, char* bits, char* stop
 	if ((newbaud = (atol(baudr) / 100)) == 0 && baudr[0] != '0')
 		newbaud = -1;
 
-	switch(newbaud) {
-		case 0:
-			spd = 0;
-		break;
+	switch (newbaud) {
+	case 0:
+		spd = 0;
+	break;
 
-		case 3:
-			spd = B300;
-		break;
+	case 3:
+		spd = B300;
+	break;
 
-		case 6:
-			spd = B600;
-		break;
+	case 6:
+		spd = B600;
+	break;
 
-		case 12:
-			spd = B1200;
-		break;
+	case 12:
+		spd = B1200;
+	break;
 
-		case 24:
-			spd = B2400;
-		break;
+	case 24:
+		spd = B2400;
+	break;
 
-		case 48:
-			spd = B4800;
-		break;
+	case 48:
+		spd = B4800;
+	break;
 
-		case 96:
-			spd = B9600;
-		break;
+	case 96:
+		spd = B9600;
+	break;
 
-		case 192:
-			spd = B19200;
-		break;
+	case 192:
+		spd = B19200;
+	break;
 
-		case 384:
-			spd = B38400;
-		break;
+	case 384:
+		spd = B38400;
+	break;
 
-		case 576:
-			spd = B57600;
-		break;
+	case 576:
+		spd = B57600;
+	break;
 
-		case 1152:
-			spd = B115200;
-		break;
+	case 1152:
+		spd = B115200;
+	break;
 
-		default:
-			err("invaid baud rate");
-		break;
+	default:
+		err("invaid baud rate");
+	break;
 	}
 
 	if (spd != -1) {
@@ -287,34 +276,34 @@ static int __tty_setparms(int fd, char* baudr, char* par, char* bits, char* stop
 		cfsetispeed(&tty, (speed_t) spd);
 	}
 
-	switch(bit) {
-		case '5':
-			tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS5;
-		break;
+	switch (bit) {
+	case '5':
+		tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS5;
+	break;
 
-		case '6':
-			tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS6;
-		break;
+	case '6':
+		tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS6;
+	break;
 
-		case '7':
-			tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS7;
-		break;
+	case '7':
+		tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS7;
+	break;
 
-		case '8':
-		default:
-			tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;
-		break;
+	case '8':
+	default:
+		tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;
+	break;
 	}
 
-	switch(stop_bit) {
-		case '1':
-			tty.c_cflag &= ~CSTOPB;
-		break;
+	switch (stop_bit) {
+	case '1':
+		tty.c_cflag &= ~CSTOPB;
+	break;
 
-		case '2':
-		default:
-			tty.c_cflag |= CSTOPB;
-		break;
+	case '2':
+	default:
+		tty.c_cflag |= CSTOPB;
+	break;
 	}
 
 	/* Set into raw, no echo mode */
@@ -339,34 +328,34 @@ static int __tty_setparms(int fd, char* baudr, char* par, char* bits, char* stop
 
 	if (tcsetattr(fd, TCSANOW, &tty) < 0) {
 		g_free(old_setting);
-		return TAPI_API_TRANSPORT_LAYER_FAILURE;
+		return FALSE;
 	}
 
 	__tty_setrts(fd);
 	__tty_sethwf(fd, hwf);
 
-	return TAPI_API_SUCCESS;
+	return TRUE;
 }
 
 /*
- *	Close TTY Device.
+ * Close TTY Device
  */
-static int __tty_close(int fd)
+static gboolean __tty_close(gint fd)
 {
-	tty_old_setting_t *old_setting = NULL;
+	TtyOldSetting *old_setting = NULL;
 
-	dbg("Function Entrance");
+	dbg("Enter");
 
 	/* Get previous settings */
 	old_setting = __search_tty_oldsetting(fd);
 	if (old_setting == NULL) {
-		dbg("[VDPRAM] No previous settings found!!!");
-		return TAPI_API_SUCCESS;
+		dbg("No previous settings found!!!");
+		return TRUE;
 	}
 
 	if (tcsetattr(fd, TCSAFLUSH, &old_setting->termiosVal) < 0)	{
-		err("[VDPRAM] Close failed");
-		return TAPI_API_TRANSPORT_LAYER_FAILURE;
+		err("Close failed");
+		return FALSE;
 	}
 
 	/* Remove the previous setting configured */
@@ -378,30 +367,30 @@ static int __tty_close(int fd)
 	/* Close fd */
 	close(fd);
 
-	return TAPI_API_SUCCESS;
+	return TRUE;
 }
 
 /*
- *	Wait on select.
+ * Wait on select
  */
-static void __sleep(int sec, int msec)
+static void __sleep(gint sec, gint msec)
 {
-    struct timeval tv;
+	struct timeval tv;
 
-    tv.tv_sec = sec;
-    tv.tv_usec = msec;
+	tv.tv_sec = sec;
+	tv.tv_usec = msec;
 
-    select(0, NULL, NULL, NULL, &tv);
+	select(0, NULL, NULL, NULL, &tv);
 }
 
 /*
  * Close the VDPRAM device
  */
-int vdpram_close(int fd)
+gboolean vdpram_close(gint fd)
 {
-	int ret = TAPI_API_SUCCESS;
+	gint ret;
 
-	dbg("Function Entrance");
+	dbg("Enter");
 
 	/* Close VDPRAM Device */
 	ret = __tty_close(fd);
@@ -412,125 +401,120 @@ int vdpram_close(int fd)
 /*
  * Open the VDPRAM device
  */
-int vdpram_open (void)
+gint vdpram_open (void)
 {
-	int rv = -1;
-	int fd = -1;
-	int val = 0;
-	unsigned int cmd =0;
+	gint rv = -1;
+	gint fd = -1;
+	gint val = 0;
+	guint cmd =0;
 
-	dbg("Function Enterence.");
+	dbg("Enter");
 
 	/* Open DPRAM device */
 	fd = open(VDPRAM_OPEN_PATH, O_RDWR);
 	if (fd < 0) {
-		err("[VDPRAM] Open VDPRAM file - [FAIL] Error: [%s]", strerror(errno));
+		err("Open VDPRAM file - [FAIL] Error: [%s]", strerror(errno));
 		return rv;
 	} else {
-		dbg("[VDPRAM] Open VDPRAM file - [SUCCESS] fd: [%d] path: [%s]",
-										fd, VDPRAM_OPEN_PATH);
+		dbg("Open VDPRAM file - [SUCCESS] fd: [%d] path: [%s]",
+			fd, VDPRAM_OPEN_PATH);
 	}
 
 	/* Set device parameters */
-	if (__tty_setparms(fd, "115200", "N", "8", "1", 0, 0) != TAPI_API_SUCCESS) {
-		err("[VDPRAM] Set TTY device parameters - [FAIL]");
+	if (__tty_setparms(fd, "115200", "N", "8", "1", 0, 0) != TRUE) {
+		err("Set TTY device parameters - [FAIL]");
 
 		/* Close VDPRAM Device */
-		vdpram_close(fd);
+		(void)vdpram_close(fd);
 		return rv;
 	}
 	else {
-		dbg("[VDPRAM] Set TTY device parameters - [SUCCESS]");
+		dbg("Set TTY device parameters - [SUCCESS]");
 	}
 
 	/* TODO: No need to check Status. Delete */
 	cmd = HN_DPRAM_PHONE_GETSTATUS;
 	if (ioctl(fd, cmd, &val) < 0) {
-		err("[VDPRAM] Get Phone status - [FAIL] fd: [d] cmd: [%d] val: [%d]",
-											fd, cmd, val);
+		err("Get Phone status - [FAIL] fd: [d] cmd: [%d] val: [%d]",
+			fd, cmd, val);
 
 		/* Close Device */
-		vdpram_close(fd);
+		(void)vdpram_close(fd);
 
 		return rv;
 	} else {
-		dbg("[VDPRAM] Get Phone status - [SUCCESS]");
+		dbg("Get Phone status - [SUCCESS]");
 	}
 
 	return fd;
 }
 
 /*
- *	Power ON the Phone.
+ * Power ON the Phone
  */
-gboolean vdpram_poweron(int fd)
+gboolean vdpram_poweron(gint fd)
 {
 	if (ioctl(fd, HN_DPRAM_PHONE_ON, NULL) < 0) {
-		err("[VDPRAM] Phone Power ON [FAIL] - fd: [%d] Error: [%s]", fd, strerror(errno));
+		err("Phone Power ON [FAIL] - fd: [%d] Error: [%s]", fd, strerror(errno));
 		return FALSE;
 	}
 	else {
-		dbg("[VDPRAM] Phone Power ON [SUCCESS] - fd: [%d]", fd);
+		dbg("Phone Power ON [SUCCESS] - fd: [%d]", fd);
 		return TRUE;
 	}
 }
 
 /*
- *	Power OFF the Phone.
+ * Power OFF the Phone
  */
-gboolean vdpram_poweroff(int fd)
+gboolean vdpram_poweroff(gint fd)
 {
 	if (ioctl(fd, HN_DPRAM_PHONE_OFF, NULL) < 0) {
-		err("[VDPRAM] Phone Power OFF [FAIL] - fd: [%d] Error: [%s]", fd, strerror(errno));
+		err("Phone Power OFF [FAIL] - fd: [%d] Error: [%s]", fd, strerror(errno));
 		return FALSE;
 	}
 	else {
-		dbg("[VDPRAM] Phone Power OFF [SUCCESS] - fd: [%d]", fd);
+		dbg("Phone Power OFF [SUCCESS] - fd: [%d]", fd);
 		return TRUE;
 	}
 }
 
 /*
- *	Read data from VDPRAM.
+ * Read data from VDPRAM
  */
-int vdpram_tty_read(int nFd, void* buf, size_t nbytes)
+gint vdpram_tty_read(gint fd, void *buf, size_t buf_len)
 {
-	int	actual = 0;
+	gint actual = 0;
 
-	if ((actual = read(nFd, buf, nbytes)) < 0) {
-		err("[VDPRAM] Read [FAIL] - fd: [%d] Error: [%s]", nFd, strerror(errno));
+	if ((actual = read(fd, buf, buf_len)) < 0) {
+		err("Read [FAIL] - fd: [%d] Error: [%s]", fd, strerror(errno));
 	}
-
-	/* Dumping Read data */
-	vdpram_hex_dump(RX, actual, buf);
 
 	return actual;
 }
 
 /*
- *	Write data to VDPRAM.
+ * Write data to VDPRAM
  */
-int vdpram_tty_write(int nFd, void* buf, size_t nbytes)
+gint vdpram_tty_write(gint fd, void *buf, size_t buf_len)
 {
-	int ret;
 	size_t actual = 0;
-	int	retry = 0;
+	guint retry = 0;
+	gint ret;
 
-	do {
-		vdpram_hex_dump(TX, nbytes, buf);
-
+	while(actual < buf_len) {
 		/* Write to Device */
-		ret = write(nFd, (unsigned char* )buf, nbytes - actual);
+		ret = write(fd, (guchar *)buf, buf_len - actual);
 		if (ret < 0) {
-			err("[VDPRAM] Write [FAIL] - fd: [%d] Error: [%s]",
-												nFd, strerror(errno));
+			err("Write [FAIL] - fd: [%d] Error: [%s]",
+				fd, strerror(errno));
 
 			if ((errno == EAGAIN) || (errno == EBUSY)) {
 				/* Sleep for 50 msecs */
 				__sleep(SLEEP_TIME_IN_SEC, SLEEP_TIME_IN_MSEC);
 
 				if (retry == MAX_RETRY_COUNT) {
-					err("[VDPRAM] Maximum retries completed!!!");
+					err("Maximum retries completed!!!");
 					return 0;
 				}
 
@@ -538,17 +522,17 @@ int vdpram_tty_write(int nFd, void* buf, size_t nbytes)
 				continue;
 			}
 
-			if (actual != nbytes)
-				err("[VDPRAM] Write [FAIL] - fd: [%d]", nFd);
+			if (actual != buf_len)
+				err("Write [FAIL] - fd: [%d]", fd);
 
-			err("[VDPRAM] Write [FAIL] - Error: [%s]", strerror(errno));
+			err("Write [FAIL] - Error: [%s]", strerror(errno));
 			return actual;
 		}
 
 		actual  += ret;
 		buf     += ret;
-		dbg("[VDPRAM] Write Actual bytes: [%d] Written bytes: [%d]", actual, ret);
-	} while(actual < nbytes);
+		dbg("Write Actual bytes: [%d] Written bytes: [%d]", actual, ret);
+	};
 
 	return actual;
 }

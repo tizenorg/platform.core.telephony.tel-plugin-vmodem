@@ -21,16 +21,19 @@ INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR}/include/)
 
 SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${EXTRA_CFLAGS} -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wdeclaration-after-statement -Wmissing-declarations -Wredundant-decls -Wcast-align")
 
-ADD_DEFINITIONS("-DFEATURE_DLOG_DEBUG")
-ADD_DEFINITIONS("-DTCORE_LOG_TAG=\"TEL_PLUGIN_VMODEM\"")
+
+ADD_DEFINITIONS("-DFEATURE_TLOG_DEBUG")
+ADD_DEFINITIONS("-DTCORE_LOG_TAG=\"VMODEM\"")
+ADD_DEFINITIONS("-DEXPORT_API=__attribute__((visibility(\"default\")))")
 
 MESSAGE(${CMAKE_C_FLAGS})
 MESSAGE(${CMAKE_EXE_LINKER_FLAGS})
 
 SET(SRCS
-		src/desc-vmodem.c
-		src/vdpram.c
-		src/vdpram_dump.c
+	src/desc-vmodem.c
+	src/vdpram.c
+	src/config.c
+	src/vdpram_dump.c
 )
 
 
@@ -42,6 +45,5 @@ SET_TARGET_PROPERTIES(vmodem-plugin PROPERTIES PREFIX "" OUTPUT_NAME vmodem-plug
 
 
 # install
-INSTALL(TARGETS vmodem-plugin
-	LIBRARY DESTINATION ${LIB_INSTALL_DIR}/telephony/plugins)
+INSTALL(TARGETS ${PROJECT_NAME} LIBRARY DESTINATION ${LIB_INSTALL_DIR}/telephony/plugins)
 INSTALL(FILES ${CMAKE_SOURCE_DIR}/LICENSE DESTINATION /usr/share/license RENAME tel-plugin-vmodem)

@@ -1,9 +1,13 @@
+%define major 3
+%define minor 0
+%define patchlevel 1
+
 Name:       tel-plugin-vmodem
-Summary:    Telephony AT Virtual Modem library
-Version:    0.1.8
-Release:    1
-Group:      System/Libraries
-License:    Apache-2.0
+Version:        %{major}.%{minor}.%{patchlevel}
+Release:        1
+License:        Apache-2.0
+Summary:        Telephony Plug-in for AT communication with AT Virtual Modem (emulator)
+Group:          System/Libraries
 Source0:    tel-plugin-vmodem-%{version}.tar.gz
 Source1001: 	tel-plugin-vmodem.manifest
 Requires(post): /sbin/ldconfig

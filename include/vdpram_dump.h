@@ -1,9 +1,7 @@
 /*
  * tel-plugin-vmodem
  *
- * Copyright (c) 2012 Samsung Electronics Co., Ltd. All rights reserved.
- *
- * Contact: Junhwan An <jh48.an@samsung.com>
+ * Copyright (c) 2013 Samsung Electronics Co. Ltd. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,10 +19,6 @@
 #ifndef __VDPRAM_DUMP_H__
 #define __VDPRAM_DUMP_H__
 
-#define TX				0
-#define RX				1
+void vdpram_hex_dump(gboolean tx, gushort data_len, void *data);
 
-void vdpram_hex_dump(int dir, unsigned short data_len, void *data);
-
-#endif
-
+#endif	/* __VDPRAM_DUMP_H__ */

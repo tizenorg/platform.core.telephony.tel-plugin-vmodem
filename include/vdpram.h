@@ -1,9 +1,7 @@
 /*
  * tel-plugin-vmodem
  *
- * Copyright (c) 2012 Samsung Electronics Co., Ltd. All rights reserved.
- *
- * Contact: Junhwan An <jh48.an@samsung.com>
+ * Copyright (c) 2013 Samsung Electronics Co. Ltd. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,12 +19,13 @@
 #ifndef __VDPRAM_H__
 #define __VDPRAM_H__
 
-int vdpram_close(int fd);
-int vdpram_open (void);
-gboolean vdpram_poweron(int fd);
-gboolean vdpram_poweroff(int fd);
+gint vdpram_open (void);
+gboolean vdpram_close(gint fd);
 
-int vdpram_tty_read(int nFd, void* buf, size_t nbytes);
-int vdpram_tty_write(int nFd, void* buf, size_t nbytes);
+gboolean vdpram_poweron(gint fd);
+gboolean vdpram_poweroff(gint fd);
 
-#endif
+gint vdpram_tty_read(gint fd, void *buf, size_t buf_len);
+gint vdpram_tty_write(gint fd, void *buf, size_t buf_len);
+
+#endif	/* __VDPRAM_H__ */
