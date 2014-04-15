@@ -44,6 +44,69 @@
 
 #define AT_CP_POWER_ON_TIMEOUT	500
 
+static guint __vmodem_reencode_mt_sms(gchar *mt_sms, guint mt_sms_len)
+{
+#define VMODEM_CR	0x0D
+#define VMODEM_LF	0x0A
+#define VMODEM_COLON	0x3A
+
+	gchar sms_buf[BUF_LEN_MAX] = {0, };
+	guint sca_len, pdu_len, tpdu_len;
+	gushort tpdu_len_ptr;
+	gchar data;
+	guint i;
+
+	for (i = 0; i < mt_sms_len; i++) {
+		if ((mt_sms[i] == VMODEM_CR)
+				&& (mt_sms[i+1] == VMODEM_LF)) {
+			sms_buf[i] = mt_sms[i];
+			i++;
+			sms_buf[i] = mt_sms[i];
+			i++;
+			break;
+		}
+		else if (mt_sms[i] == VMODEM_COLON)
+			tpdu_len_ptr = i+1;
+
+		/* Byte copy */
+		sms_buf[i] = mt_sms[i];
+	}
+	sca_len = mt_sms[i];
+	dbg("SCA length: [%d] TPDU length offset: [%d]", sca_len, tpdu_len_ptr);
+
+	pdu_len = (mt_sms_len-i);
+	tpdu_len = pdu_len - (sca_len+1);
+	dbg("PDU length: [%d] Actual TPDU Length: [%d]", pdu_len, tpdu_len);
+
+	tcore_util_byte_to_hex(&mt_sms[i], &sms_buf[i], pdu_len);
+	dbg("MT SMS: [%s]", sms_buf);
+
+	/* Append <CR> & <LF> */
+	i += 2*pdu_len;
+	sms_buf[i++] = VMODEM_CR;
+	sms_buf[i++] = VMODEM_LF;
+
+	/* Update actual TPDU length */
+	data = (tpdu_len/10) + '0';
+	sms_buf[tpdu_len_ptr] = data;
+	tpdu_len_ptr++;
+
+	data = (tpdu_len%10) + '0';
+	sms_buf[tpdu_len_ptr] = data;
+
+	tcore_util_hex_dump("        ", (gint)i, sms_buf);
+
+	/*
+	 * Copy back
+	 *
+	 * 'data_len' is not accessed hence it need not be updated.
+	 */
+	g_strlcpy(mt_sms, sms_buf, i+1);
+	dbg("Encoded MT SMS: [%d][%s]", i, mt_sms);
+
+	return i;
+}
+
 static guint __register_gio_watch(TcoreHal *h, int fd, void *callback)
 {
 	GIOChannel *channel = NULL;
@@ -144,6 +207,16 @@ static gboolean __on_recv_vdpram_message(GIOChannel *channel,
 
 	/* Emit response callback */
 	tcore_hal_emit_recv_callback(hal, n, buf);
+
+	/*
+	 * This is to ensure that the received MT SMS (+CMT:) is
+	 * encoded according to 3GPP standard
+	 */
+	if (buf[0] == 0x2B && buf[1] == 0x43 && buf[2] == 0x4D
+			&& buf[3] == 0x54 && buf[4] == 0x3A) {
+		dbg("Received - [MT SMS]");
+		n = __vmodem_reencode_mt_sms((gchar *)buf, n);
+	}
 
 	/* Dispatch received data to response handler */
 	ret = tcore_hal_dispatch_response_data(hal, 0, n, buf);
