@@ -1,7 +1,9 @@
 /*
  * tel-plugin-vmodem
  *
- * Copyright (c) 2013 Samsung Electronics Co. Ltd. All rights reserved.
+ * Copyright (c) 2012 Samsung Electronics Co., Ltd. All rights reserved.
+ *
+ * Contact: Junhwan An <jh48.an@samsung.com>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,32 +19,131 @@
  */
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <stdlib.h>
 #include <time.h>
 #include <fcntl.h>
 
 #include <glib.h>
 
 #include <tcore.h>
-#include <server.h>
 #include <plugin.h>
+#include <server.h>
+#include <user_request.h>
 #include <hal.h>
+#include <core_object.h>
 
-#include "config.h"
 #include "vdpram.h"
-#include "vdpram_dump.h"
 
-#define VMODEM_HAL_NAME		"vmodem"
+#define SERVER_INIT_WAIT_TIMEOUT		500
 
-#define DEVICE_NAME_LEN_MAX		16
-#define DEVICE_NAME_PREFIX		"pdp"
+#define DEVICE_NAME_LEN_MAX			16
+#define DEVICE_NAME_PREFIX			"pdp"
 
-#define BUF_LEN_MAX			512
+#define BUF_LEN_MAX				512
 
-#define AT_CP_POWER_ON_TIMEOUT	500
+#define CORE_OBJECT_NAME_MAX			16
+
+#define MODEM_PLUGIN_NAME			"atmodem-plugin.so"
+
+#define BIT_SIZE(type) (sizeof(type) * 8)
+
+#define COPY_MASK(type) ((0xffffffff) >> (32 - BIT_SIZE(type)))
+
+#define MASK(width, offset, data) \
+	(((width) == BIT_SIZE(data)) ? (data) :	 \
+	 ((((COPY_MASK(data) << (BIT_SIZE(data) - ((width) % BIT_SIZE(data)))) & COPY_MASK(data)) >> (offset)) & (data))) \
+
+
+#define MASK_AND_SHIFT(width, offset, shift, data)	\
+	((((signed) (shift)) < 0) ?		  \
+	 MASK((width), (offset), (data)) << -(shift) :	\
+	 MASK((width), (offset), (data)) >> (((signed) (shift)))) \
+
+struct custom_data {
+	int vdpram_fd;
+	guint watch_id_vdpram;
+};
+
+typedef struct {
+	TcoreHal *hal;
+	TcoreModem *modem;
+} PluginData;
+
+struct v_modules {
+	unsigned int co_type;
+	char co_name[CORE_OBJECT_NAME_MAX];
+};
+
+static char __util_unpackb(const char *src, int pos, int len)
+{
+	char result = 0;
+	int rshift = 0;
+
+	src += pos / 8;
+	pos %= 8;
+
+	rshift = MAX(8 - (pos + len), 0);
+
+	if (rshift > 0) {
+		result = MASK_AND_SHIFT(len, pos, rshift, (unsigned char)*src);
+	} else {
+		result = MASK(8 - pos, pos, (unsigned char)*src);
+		src++;
+		len -= 8 - pos;
+
+		if (len > 0) result = (result << len) | (*src >> (8 - len));   // if any bits left
+	}
+
+	return result;
+}
+
+static char __util_convert_byte_hexchar(char val)
+{
+	char hex_char;
+
+	if (val <= 9) {
+		hex_char = (char) (val + '0');
+	} else if (val >= 10 && val <= 15) {
+		hex_char = (char) (val - 10 + 'A');
+	} else {
+		hex_char = '0';
+	}
+
+	return (hex_char);
+}
+
+static gboolean __util_byte_to_hex(const char *byte_pdu, char *hex_pdu, int num_bytes)
+{
+	int i;
+	char nibble;
+	int buf_pos = 0;
+
+	for (i = 0; i < num_bytes * 2; i++) {
+		nibble = __util_unpackb(byte_pdu, buf_pos, 4);
+		buf_pos += 4;
+		hex_pdu[i] = __util_convert_byte_hexchar(nibble);
+	}
+
+	return TRUE;
+}
+
+static TcoreModem *__get_modem(TcorePlugin *modem_iface_plugin)
+{
+	PluginData *user_data;
+
+	if (modem_iface_plugin == NULL)
+		return NULL;
+
+	user_data = tcore_plugin_ref_user_data(modem_iface_plugin);
+	if (user_data == NULL)
+			return NULL;
+
+	/* 'modem' corresponding to Modem Interface plug-in */
+	return user_data->modem;
+}
 
 static guint __vmodem_reencode_mt_sms(gchar *mt_sms, guint mt_sms_len)
 {
@@ -52,9 +153,12 @@ static guint __vmodem_reencode_mt_sms(gchar *mt_sms, guint mt_sms_len)
 
 	gchar sms_buf[BUF_LEN_MAX] = {0, };
 	guint sca_len, pdu_len, tpdu_len;
-	gushort tpdu_len_ptr;
-	gchar data;
-	guint i;
+	gushort tpdu_len_ptr = 0;
+	gchar tpdu_len_str[8] = {0};
+	guint i, local_index = 0;
+
+	if (mt_sms_len > BUF_LEN_MAX)
+		mt_sms_len = BUF_LEN_MAX-2;
 
 	for (i = 0; i < mt_sms_len; i++) {
 		if ((mt_sms[i] == VMODEM_CR)
@@ -78,23 +182,67 @@ static guint __vmodem_reencode_mt_sms(gchar *mt_sms, guint mt_sms_len)
 	tpdu_len = pdu_len - (sca_len+1);
 	dbg("PDU length: [%d] Actual TPDU Length: [%d]", pdu_len, tpdu_len);
 
-	tcore_util_byte_to_hex(&mt_sms[i], &sms_buf[i], pdu_len);
-	dbg("MT SMS: [%s]", sms_buf);
+	if (pdu_len >= 100 && tpdu_len < 100) {
+		/*
+		 * Move back complete buffer by a Byte (to fill up the
+		 * void created by hundreds place).
+		 */
+		if (i > 3) {
+			sms_buf[i-3] = VMODEM_CR;
+			sms_buf[i-2] = VMODEM_LF;
 
-	/* Append <CR> & <LF> */
-	i += 2*pdu_len;
-	sms_buf[i++] = VMODEM_CR;
-	sms_buf[i++] = VMODEM_LF;
+			__util_byte_to_hex(&mt_sms[i], &sms_buf[i-1], pdu_len);
+			i += (2*pdu_len - 1);
+		}
+	} else {
+		__util_byte_to_hex(&mt_sms[i], &sms_buf[i], pdu_len);
+		i += 2*pdu_len;
+	}
 
 	/* Update actual TPDU length */
-	data = (tpdu_len/10) + '0';
-	sms_buf[tpdu_len_ptr] = data;
-	tpdu_len_ptr++;
+	snprintf(tpdu_len_str, 8, "%d", tpdu_len);
+	switch (strlen(tpdu_len_str)) {
+	case 4:			/* 100s place */
+		dbg("1000s : [%d]", tpdu_len_str[local_index]);
 
-	data = (tpdu_len%10) + '0';
-	sms_buf[tpdu_len_ptr] = data;
+		sms_buf[tpdu_len_ptr] = tpdu_len_str[local_index];
+		tpdu_len_ptr++;
 
-	tcore_util_hex_dump("        ", (gint)i, sms_buf);
+		local_index++;
+	case 3:			/* 100s place */
+		dbg("100s : [%d]", tpdu_len_str[local_index]);
+
+		sms_buf[tpdu_len_ptr] = tpdu_len_str[local_index];
+		tpdu_len_ptr++;
+
+		local_index++;
+	case 2:			/* 10s place */
+		dbg("10s : [%d]", tpdu_len_str[local_index]);
+
+		sms_buf[tpdu_len_ptr] = tpdu_len_str[local_index];
+		tpdu_len_ptr++;
+
+		local_index++;
+	case 1:			/* 1s place */
+		dbg("1s : [%d]", tpdu_len_str[local_index]);
+
+		sms_buf[tpdu_len_ptr] = tpdu_len_str[local_index];
+		tpdu_len_ptr++;
+	break;
+	default:
+		dbg("Unsupported length: [%d]", strlen(tpdu_len_str));
+	break;
+	}
+
+	/* Append <CR> & <LF> */
+	if (i > BUF_LEN_MAX)
+		i = BUF_LEN_MAX-2;
+
+	sms_buf[i++] = VMODEM_CR;
+	sms_buf[i++] = VMODEM_LF;
+	dbg("MT SMS: [%s]", sms_buf);
+
+	tcore_util_hex_dump("        ", (int)i, sms_buf);
 
 	/*
 	 * Copy back
@@ -133,61 +281,101 @@ static void __deregister_gio_watch(guint watch_id)
 	g_source_remove(watch_id);
 }
 
-static TcoreHookReturn __on_hal_send(TcoreHal *hal,
-		guint data_len, void *data, void *user_data)
+static gboolean __load_modem_plugin(gpointer data)
 {
-	/* Dumping Send (Write) data */
-	vdpram_hex_dump(TRUE, data_len, data);
+	TcoreHal *hal;
+	TcorePlugin *plugin;
+	struct custom_data *user_data;
+	TcoreModem *modem;
+	unsigned int slot_count = 1;
 
-	return TCORE_HOOK_RETURN_CONTINUE;
-}
+	dbg("Entry");
 
-static void __on_hal_recv(TcoreHal *hal,
-	guint data_len, const void *data, void *user_data)
-{
-	/* Dumping Receive (Read) data */
-	vdpram_hex_dump(FALSE, data_len, (void *)data);
-}
-
-static gboolean __modem_power(TcoreHal *hal, gboolean enable)
-{
-	CustomData *user_data;
-
-	user_data = tcore_hal_ref_user_data(hal);
-	if (user_data == NULL) {
-		err("User data is NULL");
+	if (data == NULL) {
+		err("data is NULL");
 		return FALSE;
 	}
 
-	if (enable == TRUE) {		/* POWER ON */
+	hal = data;
+	plugin = tcore_hal_ref_plugin(hal);
+	modem = __get_modem(plugin);
+
+	/* Load Modem Plug-in */
+	if (tcore_server_load_modem_plugin(tcore_plugin_ref_server(plugin),
+			modem, MODEM_PLUGIN_NAME) == TCORE_RETURN_FAILURE) {
+		err("Load Modem Plug-in - [FAIL]");
+
+		goto EXIT;
+	} else {
+		dbg("Load Modem Plug-in - [SUCCESS]");
+	}
+
+	tcore_server_send_notification(tcore_plugin_ref_server(plugin),
+		NULL, TNOTI_SERVER_ADDED_MODEM_PLUGIN_COMPLETED,
+		sizeof(slot_count), &slot_count);
+
+	/* To stop the cycle need to return FALSE */
+	return FALSE;
+
+EXIT:
+	user_data = tcore_hal_ref_user_data(hal);
+	if (user_data == NULL)
+		return FALSE;
+
+	/* Deregister from Watch list */
+	__deregister_gio_watch(user_data->watch_id_vdpram);
+
+	/* Free HAL */
+	tcore_hal_free(hal);
+
+	/* Close VDPRAM device */
+	vdpram_close(user_data->vdpram_fd);
+
+	/* Free custom data */
+	g_free(user_data);
+
+	return FALSE;
+}
+
+static TReturn _modem_power(TcoreHal *hal, gboolean enable)
+{
+	struct custom_data *user_data;
+
+	user_data = tcore_hal_ref_user_data(hal);
+	if (user_data == NULL) {
+		err(" User data is NULL");
+		return TCORE_RETURN_FAILURE;
+	}
+
+	if (enable == TRUE) {			/* POWER ON */
 		if (FALSE == vdpram_poweron(user_data->vdpram_fd)) {
-			err("Power ON - [FAIL]");
-			return FALSE;
+			err(" Power ON - [FAIL]");
+			return TCORE_RETURN_FAILURE;
 		}
 
 		/* Set Power State - ON */
 		tcore_hal_set_power_state(hal, TRUE);
-	} else {				/* POWER OFF */
+	} else {					/* POWER OFF */
 		if (vdpram_poweroff(user_data->vdpram_fd) == FALSE) {
-			err("Power OFF - [FAIL]");
-			return FALSE;
+			err(" Power OFF - [FAIL]");
+			return TCORE_RETURN_FAILURE;
 		}
 
 		/* Set Power state - OFF */
 		tcore_hal_set_power_state(hal, FALSE);
 	}
 
-	return TRUE;
+	return TCORE_RETURN_SUCCESS;
 }
 
-static gboolean __on_recv_vdpram_message(GIOChannel *channel,
+static gboolean on_recv_vdpram_message(GIOChannel *channel,
 	GIOCondition condition, gpointer data)
 {
 	TcoreHal *hal = data;
-	CustomData *custom;
-	char buf[BUF_LEN_MAX] = {0, };
+	struct custom_data *custom;
+	char buf[BUF_LEN_MAX];
 	int n = 0;
-	TelReturn ret;
+	TReturn ret;
 
 	custom = tcore_hal_ref_user_data(hal);
 	memset(buf, 0x0, BUF_LEN_MAX);
@@ -195,17 +383,14 @@ static gboolean __on_recv_vdpram_message(GIOChannel *channel,
 	/* Read from Device */
 	n = vdpram_tty_read(custom->vdpram_fd, buf, BUF_LEN_MAX);
 	if (n < 0) {
-		err("Read error - Data received: [%d]", n);
+		err(" Read error - Data received: [%d]", n);
 		return TRUE;
 	}
-	dbg("DPRAM Receive - Data length: [%d]", n);
-
-	/* Emit receive callback */
-
+	dbg(" DPRAM Receive - Data length: [%d]", n);
 
 	msg("\n---------- [RECV] Length of received data: [%d] ----------\n", n);
 
-	/* Emit response callback */
+	/* Emit receive callback */
 	tcore_hal_emit_recv_callback(hal, n, buf);
 
 	/*
@@ -217,164 +402,115 @@ static gboolean __on_recv_vdpram_message(GIOChannel *channel,
 		dbg("Received - [MT SMS]");
 		n = __vmodem_reencode_mt_sms((gchar *)buf, n);
 	}
+	else if (buf[0] == 0x25) {
+		dbg("Replaced % --> +");
+		buf[0] = 0x2B;
+	}
 
 	/* Dispatch received data to response handler */
+	dbg("Invoking tcore_hal_dispatch_response_data()");
 	ret = tcore_hal_dispatch_response_data(hal, 0, n, buf);
 	msg("\n---------- [RECV FINISH] Receive processing: [%d] ----------\n", ret);
 
 	return TRUE;
 }
 
-static gboolean __power_on(gpointer data)
+static TReturn hal_power(TcoreHal *hal, gboolean flag)
 {
-	CustomData *user_data;
-	TcoreHal *hal = (TcoreHal*)data;
-
-	dbg("Entry");
-
-	user_data = tcore_hal_ref_user_data(hal);
-	tcore_check_return_value_assert(user_data != NULL, TRUE);
-
-	/*
-	 * Open DPRAM device: Create and Open interface to CP
-	 */
-	user_data->vdpram_fd = vdpram_open();
-	if (user_data->vdpram_fd < 1) {
-		TcorePlugin *plugin = tcore_hal_ref_plugin(hal);
-		Server *server = tcore_plugin_ref_server(plugin);
-
-		err("Failed to Create/Open CP interface");
-
-		/* Notify server a modem error occured */
-		tcore_server_send_server_notification(server,
-			TCORE_SERVER_NOTIFICATION_MODEM_ERR, 0, NULL);
-
-		goto EXIT;
-	}
-	dbg("Created AP-CP interface");
-
-	/* Register to Watch llist */
-	user_data->vdpram_watch_id = __register_gio_watch(hal,
-				user_data->vdpram_fd, __on_recv_vdpram_message);
-	dbg("fd: [%d] Watch ID: [%d]", user_data->vdpram_fd, user_data->vdpram_watch_id);
-
-	/* Power ON VDPRAM device */
-	if (__modem_power(hal, TRUE)) {
-		dbg("Power ON - [SUCCESS]");
-	} else {
-		err("Power ON - [FAIL]");
-		goto EXIT;
-	}
-
-	/* CP is ONLINE, send AT+CPAS */
-	vmodem_config_check_cp_power(hal);
-
-	/* To stop the cycle need to return FALSE */
-	return FALSE;
-
-EXIT:
-	/* TODO: Handle Deregister */
-
-	/* To stop the cycle need to return FALSE */
-	return FALSE;
+	return _modem_power(hal, flag);
 }
 
-/* HAL Operations */
-static TelReturn _hal_power(TcoreHal *hal, gboolean flag)
+static TReturn hal_send(TcoreHal *hal, unsigned int data_len, void *data)
 {
-	return __modem_power(hal, flag);
-}
-
-static TelReturn _hal_send(TcoreHal *hal,
-	guint data_len, void *data)
-{
-	CustomData *user_data;
-	gint ret;
+	int ret;
+	struct custom_data *user_data;
 
 	if (tcore_hal_get_power_state(hal) == FALSE) {
-		err("HAL Power state - OFF");
-		return TEL_RETURN_FAILURE;
+		err(" HAL Power state - OFF");
+		return TCORE_RETURN_FAILURE;
 	}
 
 	user_data = tcore_hal_ref_user_data(hal);
 	if (user_data == NULL) {
-		err("User data is NULL");
-		return TEL_RETURN_FAILURE;
+		err(" User data is NULL");
+		return TCORE_RETURN_FAILURE;
 	}
 
 	ret = vdpram_tty_write(user_data->vdpram_fd, data, data_len);
-	if(ret < 0) {
-		err("Write failed");
-		return TEL_RETURN_FAILURE;
+	if(ret < 0)	{
+		err(" Write failed");
+		return TCORE_RETURN_FAILURE;
 	}
-	dbg("vdpram_tty_write success ret=%d (fd=%d, len=%d)",
-		ret, user_data->vdpram_fd, data_len);
-
-	return TEL_RETURN_SUCCESS;
+	else {
+		dbg("vdpram_tty_write success ret=%d (fd=%d, len=%d)",
+			ret, user_data->vdpram_fd, data_len);
+		return TCORE_RETURN_SUCCESS;
+	}
 }
 
-static TelReturn _hal_setup_netif(CoreObject *co,
+static TReturn hal_setup_netif(CoreObject *co,
 	TcoreHalSetupNetifCallback func, void *user_data,
-	guint cid, gboolean enable)
+	unsigned int cid, gboolean enable)
 {
 	char ifname[DEVICE_NAME_LEN_MAX];
 	int size = 0;
 	int fd = 0;
 	char buf[32];
-	char *control = NULL;
+	const char *control = NULL;
 
 	if (cid > 3) {
-		err("Context ID: [%d]", cid);
-		return TEL_RETURN_INVALID_PARAMETER;
+		err(" Context ID: [%d]", cid);
+		return TCORE_RETURN_EINVAL;
 	}
 
 	if (enable == TRUE) {
-		dbg("ACTIVATE - Context ID: [%d]", cid);
+		dbg(" ACTIVATE - Context ID: [%d]", cid);
 		control = "/sys/class/net/svnet0/pdp/activate";
 	} else {
-		dbg("DEACTIVATE - Context ID: [%d]", cid);
+		dbg(" DEACTIVATE - Context ID: [%d]", cid);
 		control = "/sys/class/net/svnet0/pdp/deactivate";
 	}
 
 	fd = open(control, O_WRONLY);
 	if (fd < 0) {
-		err("Failed to Open interface: [%s]", control);
+		err(" Failed to Open interface: [%s]", control);
 
 		/* Invoke callback function */
 		if (func)
 			func(co, -1, NULL, user_data);
 
-		return TEL_RETURN_FAILURE;
+		return TCORE_RETURN_FAILURE;
 	}
 
 	/* Context ID needs to be written to the Device */
 	snprintf(buf, sizeof(buf), "%d", cid);
 	size = write(fd, buf, strlen(buf));
+	dbg(" SIZE [%d]", size);
 
 	/* Close 'fd' */
 	close(fd);
 
 	/* Device name */
 	snprintf(ifname, DEVICE_NAME_LEN_MAX, "%s%d", DEVICE_NAME_PREFIX, (cid - 1));
-	dbg("Interface Name: [%s]", ifname);
+	dbg(" Interface Name: [%s]", ifname);
 
 	/* Invoke callback function */
 	if (func)
 		func(co, 0, ifname, user_data);
 
-	return TEL_RETURN_SUCCESS;
+	return TCORE_RETURN_SUCCESS;
 }
 
 /* HAL Operations */
-static TcoreHalOperations hal_ops = {
-	.power = _hal_power,
-	.send = _hal_send,
-	.setup_netif = _hal_setup_netif,
+static struct tcore_hal_operations hal_ops = {
+	.power = hal_power,
+	.send = hal_send,
+	.setup_netif = hal_setup_netif,
 };
 
 static gboolean on_load()
 {
-	dbg("Load!!!");
+	dbg(" Load!!!");
 
 	return TRUE;
 }
@@ -382,105 +518,166 @@ static gboolean on_load()
 static gboolean on_init(TcorePlugin *plugin)
 {
 	TcoreHal *hal;
-	CustomData *data;
-	dbg("Init!!!");
+	PluginData *user_data;
+	struct custom_data *data;
 
-	tcore_check_return_value_assert(plugin != NULL, FALSE);
+	dbg(" Init!!!");
 
-	/* Custom data for Modem Interface Plug-in */
-	data = tcore_malloc0(sizeof(CustomData));
-	dbg("Created custom data memory");
-
-	/* Create Physical HAL */
-	hal = tcore_hal_new(plugin, VMODEM_HAL_NAME,
-			&hal_ops, TCORE_HAL_MODE_AT);
-	if (hal == NULL) {
-		err("Failed to Create Physical HAL");
-		tcore_free(data);
+	if (plugin == NULL) {
+		err(" PLug-in is NULL");
 		return FALSE;
 	}
-	dbg("HAL [0x%x] created", hal);
 
-	/* Set HAL as Modem Interface Plug-in's User data */
-	tcore_plugin_link_user_data(plugin, hal);
+	/* User Data for Modem Interface Plug-in */
+	user_data = g_try_new0(PluginData, 1);
+	if (user_data == NULL) {
+		err(" Failed to allocate memory for Plugin data");
+		return FALSE;
+	}
 
-	/* Link Custom data to HAL's 'user_data' */
+	/* Register to Server */
+	user_data->modem = tcore_server_register_modem(tcore_plugin_ref_server(plugin), plugin);
+	if (user_data->modem == NULL){
+		err(" Registration Failed");
+		g_free(user_data);
+		return FALSE;
+	}
+	dbg(" Registered from Server");
+
+
+	data = g_try_new0(struct custom_data, 1);
+	if (data == NULL) {
+		err(" Failed to allocate memory for Custom data");
+		g_free(user_data);
+		/* Unregister from Server */
+		tcore_server_unregister_modem(tcore_plugin_ref_server(plugin), user_data->modem);
+		return FALSE;
+	}
+
+	/*
+	 * Open DPRAM device
+	 */
+	data->vdpram_fd = vdpram_open();
+
+	/*
+	 * Create and initialize HAL
+	 */
+	hal = tcore_hal_new(plugin, "vmodem", &hal_ops, TCORE_HAL_MODE_AT);
+	if (hal == NULL) {
+		/* Close VDPRAM device */
+		vdpram_close(data->vdpram_fd);
+
+		/* Fre custom data */
+		g_free(data);
+
+		/* Fre Plugin data */
+		g_free(user_data);
+
+		/* Unregister from Server */
+		tcore_server_unregister_modem(tcore_plugin_ref_server(plugin), user_data->modem);
+
+		return FALSE;
+	}
+	user_data->hal = hal;
+
+	/* Link custom data to HAL user data */
 	tcore_hal_link_user_data(hal, data);
 
-	/* Add callbacks for Send/Receive Hooks */
-	tcore_hal_add_send_hook(hal, __on_hal_send, NULL);
-	tcore_hal_add_recv_callback(hal, __on_hal_recv, NULL);
-	dbg("Added Send hook and Receive callback");
+	/* Set HAL as Modem Interface Plug-in's User data */
+	tcore_plugin_link_user_data(plugin, user_data);
 
-	/* Set HAL state to Power OFF (FALSE) */
-	(void)tcore_hal_set_power_state(hal, FALSE);
-	dbg("HAL Power State: Power OFF");
+	/* Register to Watch list */
+	data->watch_id_vdpram = __register_gio_watch(hal,
+				data->vdpram_fd, on_recv_vdpram_message);
+	dbg(" fd: [%d] Watch ID: [%d]",
+				data->vdpram_fd, data->watch_id_vdpram);
 
-	/* Resgister to Server */
-	if (tcore_server_register_modem(tcore_plugin_ref_server(plugin),
-		plugin) == FALSE) {
-		err("Registration Failed");
-
-		tcore_hal_free(hal);
-		tcore_free(data);
-		return FALSE;
+	/* Power ON VDPRAM device */
+	if (_modem_power(hal, TRUE) == TCORE_RETURN_SUCCESS) {
+		dbg(" Power ON - [SUCCESS]");
+	} else {
+		err(" Power ON - [FAIL]");
+		goto EXIT;
 	}
-	dbg("Registered from Server");
 
 	/* Check CP Power ON */
-	g_timeout_add_full(G_PRIORITY_HIGH,
-		AT_CP_POWER_ON_TIMEOUT, __power_on, hal, NULL);
+	g_timeout_add_full(G_PRIORITY_HIGH, SERVER_INIT_WAIT_TIMEOUT, __load_modem_plugin, hal, 0);
 
+	dbg("[VMMODEM] Exit");
 	return TRUE;
+
+EXIT:
+	/* Deregister from Watch list */
+	__deregister_gio_watch(data->watch_id_vdpram);
+
+	/* Free HAL */
+	tcore_hal_free(hal);
+
+	/* Close VDPRAM device */
+	vdpram_close(data->vdpram_fd);
+
+	/* Free custom data */
+	g_free(data);
+
+	/*Free Plugin Data*/
+	g_free(user_data);
+
+	/* Unregister from Server */
+	tcore_server_unregister_modem(tcore_plugin_ref_server(plugin), user_data->modem);
+
+	return FALSE;
 }
 
 static void on_unload(TcorePlugin *plugin)
 {
 	TcoreHal *hal;
-	CustomData *user_data;
-	dbg("Unload!!!");
+	struct custom_data *data;
+	PluginData *user_data;
 
-	tcore_check_return_assert(plugin != NULL);
+	dbg(" Unload!!!");
 
-	/* Unload Modem Plug-in */
-	tcore_server_unload_modem_plugin(tcore_plugin_ref_server(plugin), plugin);
-
-	/* Unregister Modem Interface Plug-in from Server */
-	tcore_server_unregister_modem(tcore_plugin_ref_server(plugin), plugin);
-	dbg("Unregistered from Server");
-
-	/* HAL cleanup */
-	hal = tcore_plugin_ref_user_data(plugin);
-	if (hal == NULL) {
-		err("HAL is NULL");
+	if (plugin == NULL)
 		return;
-	}
 
-	user_data = tcore_hal_ref_user_data(hal);
+	user_data = tcore_plugin_ref_user_data(plugin);
 	if (user_data == NULL)
 		return;
 
+	hal = user_data->hal;
+
+	/* Unload Modem Plug-in */
+#if 0	/* TODO - Open the code below */
+	tcore_server_unload_modem_plugin(tcore_plugin_ref_server(plugin), plugin);
+#endif
+	data = tcore_hal_ref_user_data(hal);
+	if (data == NULL)
+		return;
+
 	/* Deregister from Watch list */
-	__deregister_gio_watch(user_data->vdpram_watch_id);
-	dbg("Deregistered Watch ID");
-
-	/* Close VDPRAM device */
-	(void)vdpram_close(user_data->vdpram_fd);
-	dbg("Closed VDPRAM device");
-
-	/* Free custom data */
-	g_free(user_data);
+	__deregister_gio_watch(data->watch_id_vdpram);
+	dbg(" Deregistered Watch ID");
 
 	/* Free HAL */
 	tcore_hal_free(hal);
-	dbg("Freed HAL");
+	dbg(" Freed HAL");
 
-	dbg("Unloaded MODEM Interface Plug-in");
+	/* Close VDPRAM device */
+	vdpram_close(data->vdpram_fd);
+	dbg(" Closed VDPRAM device");
+
+	/* Free custom data */
+	g_free(data);
+
+	tcore_server_unregister_modem(tcore_plugin_ref_server(plugin), user_data->modem);
+	dbg(" Unregistered from Server");
+
+	dbg(" Unloaded MODEM");
+	g_free(user_data);
 }
 
-/* VMODEM (Modem Interface Plug-in) descriptor */
+/* VMODEM Descriptor Structure */
 EXPORT_API struct tcore_plugin_define_desc plugin_define_desc = {
-	.name = "vmodem",
+	.name = "VMODEM",
 	.priority = TCORE_PLUGIN_PRIORITY_HIGH,
 	.version = 1,
 	.load = on_load,

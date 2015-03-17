@@ -1,32 +1,31 @@
-%define major 3
-%define minor 0
-%define patchlevel 1
+%define major 0
+%define minor 1
+%define patchlevel 18
 
-Name:       tel-plugin-vmodem
+Name:           tel-plugin-vmodem
 Version:        %{major}.%{minor}.%{patchlevel}
 Release:        1
-License:        Apache-2.0
-Summary:        Telephony Plug-in for AT communication with AT Virtual Modem (emulator)
+License:        Apache
+Summary:        Telephony AT Virtual Modem library
 Group:          System/Libraries
-Source0:    tel-plugin-vmodem-%{version}.tar.gz
-Source1001: 	tel-plugin-vmodem.manifest
-Requires(post): /sbin/ldconfig
-Requires(postun): /sbin/ldconfig
+Source0:        tel-plugin-vmodem-%{version}.tar.gz
 BuildRequires:  cmake
 BuildRequires:  pkgconfig(glib-2.0)
+BuildRequires:  pkgconfig(dlog)
 BuildRequires:  pkgconfig(tcore)
-BuildRequires:  pkgconfig(tel-headers)
+Requires(post): /sbin/ldconfig
+Requires(postun): /sbin/ldconfig
 
 %description
 Telephony AT Modem library
 
 %prep
 %setup -q
-cp %{SOURCE1001} .
 
 %build
-%cmake .
-make %{?jobs:-j%jobs}
+versionint=$[%{major} * 1000000 + %{minor} * 1000 + %{patchlevel}]
+cmake . -DCMAKE_INSTALL_PREFIX=%{_prefix} -DVERSION=$versionint
+make %{?_smp_mflags}
 
 %post
 /sbin/ldconfig
@@ -36,10 +35,10 @@ make %{?jobs:-j%jobs}
 %install
 %make_install
 mkdir -p %{buildroot}/usr/share/license
-cp LICENSE %{buildroot}/usr/share/license/%{name}
 
 %files
-%manifest %{name}.manifest
+%manifest tel-plugin-vmodem.manifest
 %defattr(-,root,root,-)
+#%doc COPYING
 %{_libdir}/telephony/plugins/vmodem-plugin*
-/usr/share/license/%{name}
+/usr/share/license/tel-plugin-vmodem
