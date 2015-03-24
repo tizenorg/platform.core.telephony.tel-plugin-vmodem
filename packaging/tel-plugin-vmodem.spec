@@ -24,7 +24,9 @@ Telephony AT Modem library
 
 %build
 versionint=$[%{major} * 1000000 + %{minor} * 1000 + %{patchlevel}]
-cmake . -DCMAKE_INSTALL_PREFIX=%{_prefix} -DVERSION=$versionint
+cmake . -DCMAKE_INSTALL_PREFIX=%{_prefix} \
+	-DLIB_INSTALL_DIR=%{_libdir} \
+	-DVERSION=$versionint
 make %{?_smp_mflags}
 
 %post
