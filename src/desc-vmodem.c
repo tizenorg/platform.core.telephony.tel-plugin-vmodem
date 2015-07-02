@@ -94,7 +94,7 @@ static char __util_unpackb(const char *src, int pos, int len)
 		src++;
 		len -= 8 - pos;
 
-		if (len > 0) result = (result << len) | (*src >> (8 - len));   // if any bits left
+		if (len > 0) result = (result << len) | (*src >> (8 - len));   /* if any bits left */
 	}
 
 	return result;
@@ -104,13 +104,12 @@ static char __util_convert_byte_hexchar(char val)
 {
 	char hex_char;
 
-	if (val <= 9) {
+	if (val <= 9)
 		hex_char = (char) (val + '0');
-	} else if (val >= 10 && val <= 15) {
+	else if (val >= 10 && val <= 15)
 		hex_char = (char) (val - 10 + 'A');
-	} else {
+	else
 		hex_char = '0';
-	}
 
 	return (hex_char);
 }
@@ -157,8 +156,8 @@ static guint __vmodem_reencode_mt_sms(gchar *mt_sms, guint mt_sms_len)
 	gchar tpdu_len_str[8] = {0};
 	guint i, local_index = 0;
 
-	if (mt_sms_len > BUF_LEN_MAX)
-		mt_sms_len = BUF_LEN_MAX-2;
+	if (mt_sms_len > (BUF_LEN_MAX - 2))
+		mt_sms_len = BUF_LEN_MAX - 2;
 
 	for (i = 0; i < mt_sms_len; i++) {
 		if ((mt_sms[i] == VMODEM_CR)
@@ -168,9 +167,9 @@ static guint __vmodem_reencode_mt_sms(gchar *mt_sms, guint mt_sms_len)
 			sms_buf[i] = mt_sms[i];
 			i++;
 			break;
+		} else if (mt_sms[i] == VMODEM_COLON) {
+			tpdu_len_ptr = i + 1;
 		}
-		else if (mt_sms[i] == VMODEM_COLON)
-			tpdu_len_ptr = i+1;
 
 		/* Byte copy */
 		sms_buf[i] = mt_sms[i];
@@ -191,7 +190,7 @@ static guint __vmodem_reencode_mt_sms(gchar *mt_sms, guint mt_sms_len)
 			sms_buf[i-3] = VMODEM_CR;
 			sms_buf[i-2] = VMODEM_LF;
 
-			__util_byte_to_hex(&mt_sms[i], &sms_buf[i-1], pdu_len);
+			__util_byte_to_hex(&mt_sms[i], &sms_buf[i - 1], pdu_len);
 			i += (2*pdu_len - 1);
 		}
 	} else {
@@ -234,10 +233,16 @@ static guint __vmodem_reencode_mt_sms(gchar *mt_sms, guint mt_sms_len)
 	break;
 	}
 
-	/* Append <CR> & <LF> */
-	if (i > BUF_LEN_MAX)
-		i = BUF_LEN_MAX-2;
+	/*
+	 * Greater than  (BUF_LEN_MAX - 2),
+	 * restrict the length to ( BUF_LEN_MAX - 2).
+	 *
+	 * This is to accomadate <CR> & <LF>.
+	 */
+	if (i > (BUF_LEN_MAX - 2))
+		i = BUF_LEN_MAX - 2;
 
+	/* Append <CR> & <LF> */
 	sms_buf[i++] = VMODEM_CR;
 	sms_buf[i++] = VMODEM_LF;
 	dbg("MT SMS: [%s]", sms_buf);
@@ -401,8 +406,7 @@ static gboolean on_recv_vdpram_message(GIOChannel *channel,
 			&& buf[3] == 0x54 && buf[4] == 0x3A) {
 		dbg("Received - [MT SMS]");
 		n = __vmodem_reencode_mt_sms((gchar *)buf, n);
-	}
-	else if (buf[0] == 0x25) {
+	} else if (buf[0] == 0x25) {
 		dbg("Replaced % --> +");
 		buf[0] = 0x2B;
 	}
@@ -437,11 +441,10 @@ static TReturn hal_send(TcoreHal *hal, unsigned int data_len, void *data)
 	}
 
 	ret = vdpram_tty_write(user_data->vdpram_fd, data, data_len);
-	if(ret < 0)	{
+	if (ret < 0) {
 		err(" Write failed");
 		return TCORE_RETURN_FAILURE;
-	}
-	else {
+	} else {
 		dbg("vdpram_tty_write success ret=%d (fd=%d, len=%d)",
 			ret, user_data->vdpram_fd, data_len);
 		return TCORE_RETURN_SUCCESS;
@@ -537,7 +540,7 @@ static gboolean on_init(TcorePlugin *plugin)
 
 	/* Register to Server */
 	user_data->modem = tcore_server_register_modem(tcore_plugin_ref_server(plugin), plugin);
-	if (user_data->modem == NULL){
+	if (user_data->modem == NULL) {
 		err(" Registration Failed");
 		g_free(user_data);
 		return FALSE;
@@ -548,9 +551,13 @@ static gboolean on_init(TcorePlugin *plugin)
 	data = g_try_new0(struct custom_data, 1);
 	if (data == NULL) {
 		err(" Failed to allocate memory for Custom data");
-		g_free(user_data);
+
 		/* Unregister from Server */
 		tcore_server_unregister_modem(tcore_plugin_ref_server(plugin), user_data->modem);
+
+		/* Free Plugin data */
+		g_free(user_data);
+
 		return FALSE;
 	}
 
@@ -558,7 +565,18 @@ static gboolean on_init(TcorePlugin *plugin)
 	 * Open DPRAM device
 	 */
 	data->vdpram_fd = vdpram_open();
+	if (data->vdpram_fd < 0) {
+		/* Fre custom data */
+		g_free(data);
 
+		/* Unregister from Server */
+		tcore_server_unregister_modem(tcore_plugin_ref_server(plugin), user_data->modem);
+
+		/* Free Plugin data */
+		g_free(user_data);
+
+		return FALSE;
+	}
 	/*
 	 * Create and initialize HAL
 	 */
@@ -570,11 +588,11 @@ static gboolean on_init(TcorePlugin *plugin)
 		/* Fre custom data */
 		g_free(data);
 
-		/* Fre Plugin data */
-		g_free(user_data);
-
 		/* Unregister from Server */
 		tcore_server_unregister_modem(tcore_plugin_ref_server(plugin), user_data->modem);
+
+		/* Fre Plugin data */
+		g_free(user_data);
 
 		return FALSE;
 	}
@@ -619,11 +637,11 @@ EXIT:
 	/* Free custom data */
 	g_free(data);
 
-	/*Free Plugin Data*/
-	g_free(user_data);
-
 	/* Unregister from Server */
 	tcore_server_unregister_modem(tcore_plugin_ref_server(plugin), user_data->modem);
+
+	/*Free Plugin Data*/
+	g_free(user_data);
 
 	return FALSE;
 }

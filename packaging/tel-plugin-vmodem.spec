@@ -1,11 +1,11 @@
 %define major 0
 %define minor 1
-%define patchlevel 18
+%define patchlevel 22
 
 Name:           tel-plugin-vmodem
 Version:        %{major}.%{minor}.%{patchlevel}
 Release:        1
-License:        Apache
+License:        Apache-2.0
 Summary:        Telephony AT Virtual Modem library
 Group:          System/Libraries
 Source0:        tel-plugin-vmodem-%{version}.tar.gz
@@ -40,7 +40,7 @@ mkdir -p %{buildroot}/usr/share/license
 
 %files
 %manifest tel-plugin-vmodem.manifest
-%defattr(-,root,root,-)
+%defattr(644,system,system,-)
 #%doc COPYING
 %{_libdir}/telephony/plugins/vmodem-plugin*
 /usr/share/license/tel-plugin-vmodem
