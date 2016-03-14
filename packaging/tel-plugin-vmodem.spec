@@ -1,6 +1,6 @@
 %define major 0
 %define minor 1
-%define patchlevel 22
+%define patchlevel 23
 
 Name:           tel-plugin-vmodem
 Version:        %{major}.%{minor}.%{patchlevel}
@@ -9,6 +9,12 @@ License:        Apache-2.0
 Summary:        Telephony AT Virtual Modem library
 Group:          System/Libraries
 Source0:        tel-plugin-vmodem-%{version}.tar.gz
+
+%if %{_with_emulator}
+%else
+ExcludeArch: %{arm} aarch64
+%endif
+
 BuildRequires:  cmake
 BuildRequires:  pkgconfig(glib-2.0)
 BuildRequires:  pkgconfig(dlog)
