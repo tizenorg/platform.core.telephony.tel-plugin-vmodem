@@ -1,6 +1,6 @@
 %define major 0
 %define minor 1
-%define patchlevel 23
+%define patchlevel 24
 
 Name:           tel-plugin-vmodem
 Version:        %{major}.%{minor}.%{patchlevel}
@@ -10,8 +10,11 @@ Summary:        Telephony AT Virtual Modem library
 Group:          System/Libraries
 Source0:        tel-plugin-vmodem-%{version}.tar.gz
 
-%if "%{_with_emulator}" == "1"
-%else
+%if "%{profile}" == "tv"
+ExcludeArch: %{arm} %ix86 x86_64
+%endif
+
+%if "%{_with_emulator}" != "1"
 ExcludeArch: %{arm} aarch64
 %endif
 
