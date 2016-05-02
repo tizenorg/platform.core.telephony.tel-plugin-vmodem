@@ -1,6 +1,6 @@
 %define major 0
 %define minor 1
-%define patchlevel 24
+%define patchlevel 25
 
 Name:           tel-plugin-vmodem
 Version:        %{major}.%{minor}.%{patchlevel}
@@ -49,7 +49,7 @@ mkdir -p %{buildroot}/usr/share/license
 
 %files
 %manifest tel-plugin-vmodem.manifest
-%defattr(644,system,system,-)
+%defattr(644,root,root,-)
 #%doc COPYING
 %{_libdir}/telephony/plugins/vmodem-plugin*
 /usr/share/license/tel-plugin-vmodem
